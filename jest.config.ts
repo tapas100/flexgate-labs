@@ -18,7 +18,14 @@ const config: Config = {
   },
   reporters: [
     'default',
-    ['jest-junit', { outputDirectory: 'reports', outputName: 'junit.xml' }],
+    ['jest-junit', {
+      outputDirectory: process.env.JEST_JUNIT_OUTPUT_DIR || 'reports',
+      outputName: process.env.JEST_JUNIT_OUTPUT_NAME || 'junit.xml',
+      classNameTemplate: '{classname}',
+      titleTemplate: '{title}',
+      ancestorSeparator: ' › ',
+      usePathForSuiteName: true,
+    }],
   ],
   testPathIgnorePatterns: ['/node_modules/', '/dist/'],
   collectCoverage: false,
