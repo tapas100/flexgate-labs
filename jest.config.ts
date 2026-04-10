@@ -31,8 +31,8 @@ const config: Config = {
   collectCoverage: false,
   // Run tests serially to avoid port conflicts and shared infra race conditions
   maxWorkers: 1,
-  // Increase default async timeouts for infrastructure-heavy tests
-  testSequencer: '@jest/test-sequencer',
+  // Custom sequencer: rate-limit runs before chaos/redis-down; details in scripts/test-sequencer.js
+  testSequencer: './scripts/test-sequencer.js',
 };
 
 export default config;

@@ -59,6 +59,13 @@ pipeline {
         // ── Run full test suite ────────────────────────────────────────────
         // Proxy must already be running at GATEWAY_URL.
         // Full infra + release flow lives in flexgate-proxy/Jenkinsfile.
+        //
+        // TEST ORDER MATTERS:
+        //   Rate-limit tests run BEFORE chaos/redis-down.test.ts.
+        //   redis-down stops Redis mid-suite; if rate-limit tests run after
+        //   that, Redis is gone and counter state is lost → false 429 results.
+        //   jest --runInBand guarantees file-level serial order; the glob
+        //   below orders by directory name which puts rate-limit before chaos.
         stage('Run Tests') {
             steps {
                 sh '''
@@ -67,7 +74,9 @@ pipeline {
                         --runInBand \
                         --forceExit \
                         --reporters=default \
-                        --reporters=jest-junit
+                        --reporters=jest-junit \
+                        --testPathPattern="(admin|circuit-breaker|e2e|observability|rate-limit|retry|security|timeout|chaos)" \
+                        --testSequencer=./scripts/test-sequencer.js
                 '''
             }
             post {

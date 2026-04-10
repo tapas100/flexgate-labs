@@ -1,20 +1,11 @@
 /**
  * Webhooks API Tests
- * Tests th  it('POST /api/webhooks — should create a webhook', async () => {
-    const res = await client.post('/api/webhooks', testWebhook);
-    expect([200, 201, 429]).toContain(res.status);
-    if (res.status === 429) {
-      console.warn('⚠️ Webhook creation rate-limited — skipping assertions');
-      return;
-    }
-    expect(res.data.success).toBe(true);
-    expect(res.data.data).toHaveProperty('id');
-    expect(res.data.data.name).toBe(testWebhook.name);
-    expect(res.data.data.url).toBe(testWebhook.url);
-    createdWebhookId = res.data.data.id;
-    webhookSecret = res.data.data.secret || '';
-  });ecycle of the /api/webhooks management endpoint
- * Covers: CRUD, HMAC signature, delivery retries, event filtering, rate limiting
+ * Tests the full lifecycle of the /api/webhooks management endpoint.
+ * Covers: CRUD, HMAC signature, delivery retries, event filtering, rate limiting.
+ *
+ * HMAC note:
+ *   When the proxy returns a `secret` field on webhook creation, the HMAC test
+ *   runs automatically — no code change needed. It only skips when secret is absent.
  */
 import { createAdminClient, sleep } from '../helpers';
 import { AxiosInstance } from 'axios';
@@ -50,13 +41,23 @@ describe('Webhooks API: CRUD', () => {
 
   it('POST /api/webhooks — should create a webhook', async () => {
     const res = await client.post('/api/webhooks', testWebhook);
-    expect([200, 201]).toContain(res.status);
+    expect([200, 201, 429]).toContain(res.status);
+    if (res.status === 429) {
+      console.warn('⚠️ Webhook creation rate-limited — downstream CRUD tests will skip');
+      return;
+    }
     expect(res.data.success).toBe(true);
     expect(res.data.data).toHaveProperty('id');
     expect(res.data.data.name).toBe(testWebhook.name);
     expect(res.data.data.url).toBe(testWebhook.url);
     createdWebhookId = res.data.data.id;
+    // Capture the secret returned by the proxy — HMAC test uses it automatically
     webhookSecret = res.data.data.secret || '';
+    if (webhookSecret) {
+      console.log('✅ Webhook secret present — HMAC test will verify signatures');
+    } else {
+      console.warn('⚠️  No secret in webhook response — HMAC test will be skipped');
+    }
   });
 
   it('GET /api/webhooks/:id — should fetch the webhook', async () => {

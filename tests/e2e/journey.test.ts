@@ -84,4 +84,27 @@ describe('E2E: Full User Journey', () => {
     expect(res.data).toHaveProperty('orders');
     expect(Array.isArray(res.data.orders)).toBe(true);
   });
+
+  /**
+   * Config-file route: webhook-receiver
+   *
+   * The route `/webhook → http://webhook-receiver:3005` is declared in
+   * flexgate/config/base.yml (id: webhook-receiver).
+   * This test verifies the proxy loads that config entry and routes correctly —
+   * i.e. it tests the config-file route loading path, not just dynamically
+   * created routes from the admin API.
+   */
+  it('should proxy /webhook route declared in base.yml config', async () => {
+    const res = await client.get('/webhook/health');
+    // webhook-receiver returns 200 on /health; proxy 404 = route not loaded from config
+    if (res.status === 404) {
+      throw new Error(
+        '❌ GET /webhook returned 404 — route not loaded from flexgate/config/base.yml.\n' +
+        'Fix: ensure the webhook-receiver entry is present in base.yml and the proxy\n' +
+        'reloads config on start.'
+      );
+    }
+    expect([200, 400, 401, 403]).toContain(res.status);
+    console.log(`✅ Config-file route /webhook → webhook-receiver: HTTP ${res.status}`);
+  });
 });
