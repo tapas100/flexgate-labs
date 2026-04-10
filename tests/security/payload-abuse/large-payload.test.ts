@@ -1,32 +1,62 @@
 /**
  * Security Test: Large Payload Rejection
- * Gateway should reject payloads exceeding maxBodySize (1mb).
- * Note: proxy may drop the connection (timeout/reset) instead of returning 413 —
- * that is also a valid rejection.
+ *
+ * Uses undici (built-in Node 18+) for precise socket-level error detection.
+ * Same rationale as json-bomb.test.ts — axios silently turns all proxy
+ * non-responses into "timeout", making tests meaningless.
+ *
+ * Correct proxy behaviour:
+ *   A) Returns 413 Payload Too Large immediately
+ *   B) Resets the TCP connection mid-stream (ECONNRESET / EPIPE)
+ *   C) Returns 429 (rate-limited before body size check)
+ *
+ * If proxy hangs > 8s on a large body → test FAILS (no protection).
  */
-import axios from 'axios';
-import { GATEWAY_URL, API_KEY } from '../../helpers';
+import { request } from 'undici';
+import { GATEWAY_URL } from '../../helpers';
 
-const client = axios.create({
-  baseURL: GATEWAY_URL,
-  timeout: 10000,
-  headers: { 'Content-Type': 'application/json', 'X-API-Key': API_KEY },
-  validateStatus: () => true,
-});
+const TIMEOUT_MS = 8000;
 
-async function postExpectRejected(payload: any, label: string): Promise<void> {
+async function postExpectRejected(payload: object, label: string): Promise<void> {
+  const body = JSON.stringify(payload);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+
   try {
-    const res = await client.post('/users', payload);
-    expect([400, 408, 413, 429, 431, 503]).toContain(res.status);
-    console.log(`${label} rejected with: ${res.status}`);
+    const { statusCode } = await request(`${GATEWAY_URL}/users`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body,
+      signal: controller.signal,
+    });
+
+    expect([400, 408, 413, 429, 431, 503]).toContain(statusCode);
+    console.log(`✅ ${label} rejected with HTTP ${statusCode}`);
+
   } catch (err: any) {
-    const isTimeout = err?.code === 'ECONNABORTED' || /timeout/i.test(err?.message ?? '');
-    const isReset   = err?.code === 'ECONNRESET';
-    if (isTimeout || isReset) {
-      console.log(`${label} blocked (${err.code ?? 'timeout'}) ✅`);
+    if (controller.signal.aborted) {
+      throw new Error(
+        `❌ ${label}: proxy did not respond in ${TIMEOUT_MS}ms — ` +
+        `no body-size limit detected. ` +
+        `Add express.json({ limit: '1mb' }) middleware to the proxy.`
+      );
+    }
+
+    const code: string = err?.code ?? err?.message ?? '';
+    const isDropped =
+      code.includes('ECONNRESET') ||
+      code.includes('UND_ERR_SOCKET') ||
+      code.includes('UND_ERR_CONNECT_TIMEOUT') ||
+      code.includes('EPIPE');
+
+    if (isDropped) {
+      console.log(`✅ ${label} — proxy dropped connection mid-stream (${code})`);
       return;
     }
+
     throw err;
+  } finally {
+    clearTimeout(timer);
   }
 }
 
@@ -36,30 +66,36 @@ describe('Security: Large Payload Rejection', () => {
       { data: 'X'.repeat(1.5 * 1024 * 1024) },
       'Large payload (1.5MB)'
     );
-  });
+  }, 12000);
 
   it('should accept payload within 1mb limit', async () => {
-    // Catch timeout — proxy may be temporarily backpressured after the large POSTs above.
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
     try {
-      const res = await client.post('/users', {
-        name: 'Normal User',
-        email: `normal-${Date.now()}@example.com`,
+      const { statusCode } = await request(`${GATEWAY_URL}/users`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          name: 'Normal User',
+          email: `normal-${Date.now()}@example.com`,
+        }),
+        signal: controller.signal,
       });
-      expect([200, 201, 400, 429, 503]).toContain(res.status);
+      expect([200, 201, 400, 429, 503]).toContain(statusCode);
     } catch (err: any) {
-      const isTimeout = err?.code === 'ECONNABORTED' || /timeout/i.test(err?.message ?? '');
-      if (isTimeout) {
-        console.warn('⚠️ POST timed out after large-payload tests — proxy recovering, skipping');
-        return;
+      if (controller.signal.aborted) {
+        throw new Error('❌ Valid POST timed out — proxy is unresponsive after large-payload tests');
       }
       throw err;
+    } finally {
+      clearTimeout(timer);
     }
-  });
+  }, 12000);
 
   it('should reject payload exactly at 1mb + 1 byte', async () => {
     await postExpectRejected(
       { data: 'X'.repeat(1 * 1024 * 1024 + 1) },
       'Payload (1MB+1)'
     );
-  });
+  }, 12000);
 });
