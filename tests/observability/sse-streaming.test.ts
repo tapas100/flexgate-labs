@@ -2,9 +2,17 @@
  * SSE / Streaming Tests
  * Tests the Server-Sent Events endpoint (src/routes/stream.js)
  * Covers: connection establishment, event delivery, reconnection
+ *
+ * Actual paths registered in stream.js (app.ts:187 → app.use('/api/stream', streamRoutes)):
+ *   GET /api/stream/metrics  — live metrics SSE
+ *   GET /api/stream/logs     — live log tail SSE
+ *   GET /api/stream/stats    — stream statistics (JSON, not SSE)
  */
 import http from 'http';
 import { GATEWAY_URL, getAuthToken, sleep } from '../helpers';
+
+// All known SSE paths — ordered by most likely to exist
+const SSE_PATHS = ['/api/stream/metrics', '/api/stream/logs', '/api/stream', '/stream', '/api/events'];
 
 function connectSSE(path: string, token?: string): Promise<{ events: string[]; close: () => void }> {
   return new Promise((resolve, reject) => {
@@ -62,12 +70,11 @@ function connectSSE(path: string, token?: string): Promise<{ events: string[]; c
 }
 
 describe('SSE / Streaming: Connection', () => {
-  it('should establish SSE connection to /stream or /api/stream', async () => {
+  it('should establish SSE connection to /api/stream/metrics or /api/stream/logs', async () => {
     const token = await getAuthToken();
-    const paths = ['/stream', '/api/stream', '/api/events'];
 
     let connected = false;
-    for (const path of paths) {
+    for (const path of SSE_PATHS) {
       try {
         const { events, close } = await connectSSE(path, token ?? undefined);
         close();
@@ -80,16 +87,18 @@ describe('SSE / Streaming: Connection', () => {
     }
 
     if (!connected) {
-      console.warn('⚠️  No SSE endpoint found — stream.js may use a different path');
+      console.warn(
+        `⚠️  No SSE endpoint found at any of: ${SSE_PATHS.join(', ')}.\n` +
+        `   Check src/routes/stream.js for the registered router paths.`
+      );
     }
-    // Not a hard failure — SSE path may vary
+    // Not a hard failure — SSE path is informational in CI
   }, 15000);
 
   it('SSE response should have correct content-type header', async () => {
     const token = await getAuthToken();
-    const paths = ['/stream', '/api/stream'];
 
-    for (const path of paths) {
+    for (const path of ['/api/stream/metrics', '/api/stream/logs']) {
       try {
         await new Promise<void>((resolve, reject) => {
           const url = new URL(path, GATEWAY_URL);
@@ -107,7 +116,7 @@ describe('SSE / Streaming: Connection', () => {
             (res) => {
               if (res.statusCode === 200) {
                 expect(res.headers['content-type']).toMatch(/text\/event-stream/);
-                console.log(`✅ Content-Type: ${res.headers['content-type']}`);
+                console.log(`✅ ${path} Content-Type: ${res.headers['content-type']}`);
               }
               req.destroy();
               resolve();

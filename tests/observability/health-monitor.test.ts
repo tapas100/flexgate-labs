@@ -56,10 +56,10 @@ describe('Health Check Monitor: Failure Detection', () => {
 
     try {
       await execAsync('podman stop flexgate-api-users');
-      // Wait for health check interval (default 30s, but proxy may have custom)
-      // We wait 15s which should trigger at least one check
-      console.log('Waiting 15s for health check to detect failure...');
-      await sleep(15000);
+      // Health check default interval = 30s (src/healthcheck/monitor.ts:63)
+      // Wait 35s to guarantee at least one full check cycle fires after the stop.
+      console.log('Waiting 35s for health check to detect failure (interval=30s)...');
+      await sleep(35000);
 
       const receiverRes = await axios.get(`${WEBHOOK_RECEIVER_URL}/webhook/received`).catch(() => null);
       if (receiverRes) {
@@ -69,11 +69,14 @@ describe('Health Check Monitor: Failure Detection', () => {
         if (healthEvents.length > 0) {
           console.log(`✅ Health events received: ${healthEvents.map((e: any) => e.payload?.event)}`);
         } else {
-          console.warn('⚠️  No health events — health check interval may be > 15s');
+          console.warn(
+            '⚠️  No health events after 35s — health check monitor may not be running\n' +
+            '   or api-users health check is not enabled in the upstream config.'
+          );
         }
       }
     } finally {
       if (webhookId) await adminClient.delete(`/api/webhooks/${webhookId}`).catch(() => null);
     }
-  }, 30000);
+  }, 50000);
 });
