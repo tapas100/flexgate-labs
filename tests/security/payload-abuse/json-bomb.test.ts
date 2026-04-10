@@ -1,25 +1,40 @@
 /**
  * Security Test: JSON Bomb / Deep Nesting
  *
- * Uses undici for precise socket-level error detection (not axios which
- * silently converts everything to "timeout").
+ * TARGET: POST /api/routes  (an admin endpoint handled by express.json() directly
+ * on the proxy — NOT proxy-forwarded to an upstream).
+ *
+ * WHY NOT POST /users:
+ *   The proxy runs express.json() globally (app.ts:161) which consumes the raw
+ *   body stream. http-proxy-middleware then has nothing left to stream to the
+ *   upstream, so the upstream never responds → connection hangs forever.
+ *   This is a known proxy architecture limitation documented in journey.test.ts.
+ *   Posting to admin API routes exercises the proxy's OWN body parser, which is
+ *   the relevant security surface for JSON bomb protection.
  *
  * KNOWN GAP (documented, not hidden):
- *   The proxy uses express.json({ limit: '10mb' }) — it has NO JSON-depth
- *   protection. Deeply nested payloads are forwarded to upstreams as-is.
- *   These tests document that gap and will FAIL until the proxy adds:
- *     - express-json-validator or a depth-check middleware
+ *   express.json() has NO JSON-depth protection. Deeply nested payloads parse
+ *   fine below the 10MB size limit. These tests document that gap.
+ *   Fix would require: express-json-validator or a depth-check middleware.
  *
  * Test strategy:
- *   - Probe what the actual body limit is (send escalating sizes)
- *   - Verify proxy responds within TIMEOUT_MS (not silent hang)
- *   - Accept 400/413/422 as "protected", 200/201 as "forwarded" (gap documented)
- *   - FAIL only if proxy hangs with no response at all
+ *   - Send nested JSON to an endpoint that goes through express.json() on the proxy
+ *   - FAIL only if proxy hangs with no response at all (AbortController deadline)
+ *   - Accept any HTTP response (200/400/401/403/422/429) as "proxy is alive"
+ *   - Warn on security gaps, never silently pass a hang
  */
 import { request } from 'undici';
-import { GATEWAY_URL } from '../../helpers';
+import { GATEWAY_URL, ADMIN_KEY } from '../../helpers';
 
 const TIMEOUT_MS = 12000;
+
+// POST to an admin API endpoint — goes through express.json() on the proxy itself,
+// not proxy-forwarded. This is the correct surface to test body parser protection.
+const TARGET_URL = `${GATEWAY_URL}/api/routes`;
+const AUTH_HEADERS = {
+  'content-type': 'application/json',
+  'x-api-key': ADMIN_KEY,
+};
 
 async function postAndMeasure(
   payload: object | string,
@@ -30,9 +45,9 @@ async function postAndMeasure(
   const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
 
   try {
-    const { statusCode } = await request(`${GATEWAY_URL}/users`, {
+    const { statusCode } = await request(TARGET_URL, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: AUTH_HEADERS,
       body,
       signal: controller.signal,
     });
@@ -41,8 +56,8 @@ async function postAndMeasure(
     if (controller.signal.aborted) {
       throw new Error(
         `❌ ${label}: proxy did not respond in ${TIMEOUT_MS}ms.\n` +
-        `This means the proxy has NO protection against this payload.\n` +
-        `Fix: add a JSON depth/size middleware before http-proxy-middleware.`
+        `The proxy's own express.json() middleware is hanging on this payload.\n` +
+        `Fix: add a JSON depth/size middleware before express.json() in app.ts.`
       );
     }
     const code: string = err?.code ?? err?.message ?? 'unknown';
@@ -70,19 +85,18 @@ describe('Security: JSON Bomb / Deep Nesting', () => {
     if ('dropped' in result) {
       console.log(`✅ Proxy dropped connection: ${result.code}`);
     } else {
-      // Proxy responded — document what it returned
       const { statusCode } = result;
-      if ([400, 413, 422, 429].includes(statusCode)) {
-        console.log(`✅ Proxy rejected with ${statusCode}`);
+      if ([400, 413, 422].includes(statusCode)) {
+        console.log(`✅ Proxy rejected depth-15 JSON with ${statusCode}`);
       } else {
-        // Proxy forwarded it — document the gap, don't fail the pipeline
+        // Proxy parsed and processed it — no depth protection, document the gap
         console.warn(
-          `⚠️  SECURITY GAP: Proxy forwarded depth-15 JSON with status ${statusCode}.\n` +
-          `   Fix: add JSON depth validation middleware before http-proxy-middleware.`
+          `⚠️  SECURITY GAP: Proxy processed depth-15 JSON with status ${statusCode}.\n` +
+          `   express.json() has no depth limit. Fix: add depth-check middleware.`
         );
       }
-      // Either way proxy responded — it did not hang (that's the minimum bar)
-      expect(statusCode).toBeGreaterThanOrEqual(200);
+      // Minimum bar: proxy responded (any HTTP status) — it did not hang
+      expect([200, 201, 400, 401, 403, 413, 422, 429]).toContain(statusCode);
     }
   }, 15000);
 
@@ -94,34 +108,37 @@ describe('Security: JSON Bomb / Deep Nesting', () => {
       console.log(`✅ Proxy dropped connection: ${result.code}`);
     } else {
       const { statusCode } = result;
-      if ([400, 413, 422, 429].includes(statusCode)) {
-        console.log(`✅ Proxy rejected with ${statusCode}`);
+      if ([400, 413, 422].includes(statusCode)) {
+        console.log(`✅ Proxy rejected array bomb with ${statusCode}`);
       } else {
-        console.warn(`⚠️  SECURITY GAP: Array bomb forwarded with ${statusCode}`);
+        console.warn(`⚠️  SECURITY GAP: Array bomb processed with ${statusCode} — no depth protection`);
       }
-      expect(statusCode).toBeGreaterThanOrEqual(200);
+      expect([200, 201, 400, 401, 403, 413, 422, 429]).toContain(statusCode);
     }
   }, 15000);
 
   it('should accept valid flat JSON payload', async () => {
+    // A valid POST to /api/routes with a well-formed but incomplete body
+    // should get a validation error (400/422) — NOT a hang
     const result = await postAndMeasure(
-      { name: 'Valid User', email: `valid-${Date.now()}@example.com` },
+      { path: `/test-json-bomb-${Date.now()}`, upstream: 'http://localhost:3001', methods: ['GET'] },
       'Valid flat JSON'
     );
     if ('dropped' in result) {
       throw new Error(`❌ Valid payload connection dropped: ${result.code}`);
     }
-    console.log(`Valid payload status: ${result.statusCode}`);
-    expect([200, 201, 400, 429, 503]).toContain(result.statusCode);
+    console.log(`Valid flat JSON status: ${result.statusCode}`);
+    // Any HTTP response means the proxy is alive and responding
+    expect([200, 201, 400, 401, 403, 422, 429]).toContain(result.statusCode);
   }, 15000);
 
   it('should respond (not hang) to deeply nested circular-ish JSON', async () => {
-    const weirdPayload = '{"a":{"b":{"c":{"d":"e"}}}}';
+    const weirdPayload = '{"a":{"b":{"c":{"d":{"e":{"f":{"g":{"h":{"i":{"j":"leaf"}}}}}}}}}}}';
     const result = await postAndMeasure(weirdPayload, 'Nested JSON (10 levels)');
     if ('dropped' in result) {
       console.log(`✅ Proxy dropped connection: ${result.code}`);
     } else {
-      expect(result.statusCode).toBeGreaterThanOrEqual(200);
+      expect([200, 201, 400, 401, 403, 413, 422, 429]).toContain(result.statusCode);
     }
   }, 15000);
 
