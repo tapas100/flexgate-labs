@@ -134,3 +134,50 @@ reports/
 | Health check monitor | `src/healthcheck/monitor.ts` |
 | SSE streaming | `src/routes/stream.js` |
 | Logs API | `routes/logs.ts` |
+
+---
+
+## Test Execution Order
+
+Tests run serially (`--runInBand`) in a fixed order via `scripts/test-sequencer.js`:
+
+```
+admin → e2e → security → observability → circuit-breaker → retry → timeout → rate-limit → chaos
+```
+
+**Why order matters:**
+- `chaos/redis-down` stops Redis — `rate-limit` must finish first (Redis counters intact)
+- `chaos/*` kills containers — `observability` must finish first (needs all services up)
+- Within `rate-limit`, `redis-down.test.ts` is always sequenced last
+
+---
+
+## Infrastructure
+
+### NATS JetStream
+
+NATS runs with JetStream enabled (`--js` flag in `podman-compose.yml`). JetStream provides durable, at-least-once event delivery for proxy events (circuit breaker state, rate limit exceeded, etc.).
+
+Verify JetStream is active:
+```bash
+curl http://localhost:8222/jsz | jq .config
+```
+
+The NATS JetStream test in `tests/chaos/nats-down.test.ts` will **fail with an actionable error** if the `--js` flag is missing.
+
+### Config-file Routes
+
+Routes can be declared statically in `flexgate/config/base.yml` (loaded on proxy start) or dynamically via the admin API. Both paths are tested:
+- Static config: `GET /webhook/health` in `tests/e2e/journey.test.ts` — fails with actionable message if proxy doesn't load config routes
+- Dynamic API: `tests/admin/routes-api.test.ts` exercises the full CRUD lifecycle
+
+### Webhook HMAC Signing
+
+`tests/admin/webhooks-api.test.ts` captures the `secret` field from the webhook creation response. If the proxy returns a secret, the HMAC test verifies it automatically — no code change needed. If no secret is returned, the test skips with a warning.
+
+---
+
+## Safety Net: Global Teardown
+
+`tests/global-teardown.ts` restores any containers that chaos tests may have left stopped (in case `afterAll` hooks crashed mid-run). This prevents infra leak between test runs.
+

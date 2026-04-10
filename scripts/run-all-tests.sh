@@ -93,32 +93,44 @@ run_step "admin" "Admin API tests (routes, webhooks, auth, logs)" \
   npx jest --testPathPattern="tests/admin" --runInBand --forceExit \
     --json --outputFile="$REPORTS_DIR/admin-results.json" || true
 
-# ── Step 4: Rate Limit Tests ──────────────────────────────────────────────────
-header "STEP 4: Rate Limit Tests"
-run_step "rate_limit" "Rate limiting tests" \
-  npx jest --testPathPattern="tests/rate-limit" --runInBand --forceExit \
-    --json --outputFile="$REPORTS_DIR/rate-limit-results.json" || true
-
-# ── Step 5: Circuit Breaker Tests ────────────────────────────────────────────
-header "STEP 5: Circuit Breaker Tests"
-run_step "circuit_breaker" "Circuit breaker tests" \
-  npx jest --testPathPattern="tests/circuit-breaker" --runInBand --forceExit \
-    --json --outputFile="$REPORTS_DIR/circuit-breaker-results.json" || true
-
-# ── Step 6: Retry & Timeout Tests ────────────────────────────────────────────
-header "STEP 6: Retry & Timeout Tests"
-run_step "retry_timeout" "Retry and timeout tests" \
-  npx jest --testPathPattern="tests/(retry|timeout)" --runInBand --forceExit \
-    --json --outputFile="$REPORTS_DIR/retry-timeout-results.json" || true
-
-# ── Step 7: Security Tests ────────────────────────────────────────────────────
-header "STEP 7: Security Tests"
+# ── Step 4: Security Tests ────────────────────────────────────────────────────
+header "STEP 4: Security Tests"
 run_step "security" "Security test suite (SSRF, headers, payload)" \
   npx jest --testPathPattern="tests/security" --runInBand --forceExit \
     --json --outputFile="$REPORTS_DIR/security-results.json" || true
 
-# ── Step 8: Chaos Tests ───────────────────────────────────────────────────────
-header "STEP 8: Chaos Tests"
+# ── Step 5: Observability Tests ───────────────────────────────────────────────
+# NOTE: Must run BEFORE chaos — chaos tests kill containers that observability needs
+header "STEP 5: Observability Tests"
+run_step "observability" "Observability validation" \
+  npx jest --testPathPattern="tests/observability" --runInBand --forceExit \
+    --json --outputFile="$REPORTS_DIR/observability-results.json" || true
+
+# ── Step 6: Circuit Breaker Tests ────────────────────────────────────────────
+header "STEP 6: Circuit Breaker Tests"
+run_step "circuit_breaker" "Circuit breaker tests" \
+  npx jest --testPathPattern="tests/circuit-breaker" --runInBand --forceExit \
+    --json --outputFile="$REPORTS_DIR/circuit-breaker-results.json" || true
+
+# ── Step 7: Retry & Timeout Tests ────────────────────────────────────────────
+header "STEP 7: Retry & Timeout Tests"
+run_step "retry_timeout" "Retry and timeout tests" \
+  npx jest --testPathPattern="tests/(retry|timeout)" --runInBand --forceExit \
+    --json --outputFile="$REPORTS_DIR/retry-timeout-results.json" || true
+
+# ── Step 8: Rate Limit Tests ──────────────────────────────────────────────────
+# NOTE: Must run BEFORE chaos/redis-down — redis-down.test.ts stops Redis
+#       which would corrupt rate-limit counter state if run out of order.
+#       Within rate-limit tests, redis-down runs last (see scripts/test-sequencer.js).
+header "STEP 8: Rate Limit Tests"
+run_step "rate_limit" "Rate limiting tests" \
+  npx jest --testPathPattern="tests/rate-limit" --runInBand --forceExit \
+    --testSequencer=./scripts/test-sequencer.js \
+    --json --outputFile="$REPORTS_DIR/rate-limit-results.json" || true
+
+# ── Step 9: Chaos Tests ───────────────────────────────────────────────────────
+# Runs LAST — kills infra containers (restored in afterAll + global-teardown)
+header "STEP 9: Chaos Tests"
 if [ "$RUN_CHAOS" = "true" ]; then
   run_step "chaos" "Chaos engineering tests" \
     npx jest --testPathPattern="tests/chaos" --runInBand --forceExit \
@@ -127,12 +139,6 @@ else
   warn "RUN_CHAOS=false — skipping chaos tests (set RUN_CHAOS=true to enable)"
   RESULTS["chaos"]="SKIP"
 fi
-
-# ── Step 9: Observability Tests ───────────────────────────────────────────────
-header "STEP 9: Observability Tests"
-run_step "observability" "Observability validation" \
-  npx jest --testPathPattern="tests/observability" --runInBand --forceExit \
-    --json --outputFile="$REPORTS_DIR/observability-results.json" || true
 
 # ── Step 10: Load Tests ───────────────────────────────────────────────────────
 header "STEP 10: Load Tests"
@@ -157,7 +163,7 @@ echo ""
 printf "%-30s %s\n" "Test Suite" "Result"
 printf "%-30s %s\n" "──────────────────────────────" "──────"
 
-for key in infra_up readiness e2e admin rate_limit circuit_breaker retry_timeout security chaos observability load_baseline; do
+for key in infra_up readiness e2e admin security observability circuit_breaker retry_timeout rate_limit chaos load_baseline; do
   status="${RESULTS[$key]:-SKIP}"
   if [ "$status" = "PASS" ]; then
     printf "%-30s ${GREEN}✅ PASS${RESET}\n" "$key"
@@ -184,7 +190,7 @@ cat > "$REPORT_FILE" <<EOF
   "total_fail": $TOTAL_FAIL,
   "passed": $([ $TOTAL_FAIL -eq 0 ] && echo "true" || echo "false"),
   "results": {
-$(for key in infra_up readiness e2e admin rate_limit circuit_breaker retry_timeout security chaos observability load_baseline; do
+$(for key in infra_up readiness e2e admin security observability circuit_breaker retry_timeout rate_limit chaos load_baseline; do
   status="${RESULTS[$key]:-SKIP}"
   echo "    \"$key\": \"$status\","
 done | sed '$ s/,$//')

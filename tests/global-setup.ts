@@ -1,6 +1,7 @@
 import axios from 'axios';
 
 const GATEWAY_URL = process.env.GATEWAY_URL || 'http://localhost:3000';
+const NATS_MONITOR_URL = process.env.NATS_MONITOR_URL || 'http://localhost:8222';
 const MAX_RETRIES = 30;
 const RETRY_DELAY_MS = 2000;
 
@@ -21,6 +22,28 @@ async function waitForService(url: string, name: string): Promise<void> {
   throw new Error(`❌ ${name} did not become ready in time`);
 }
 
+async function checkNatsJetStream(): Promise<void> {
+  try {
+    const res = await axios.get(`${NATS_MONITOR_URL}/jsz`, {
+      timeout: 3000,
+      validateStatus: () => true,
+    });
+    if (res.status === 200) {
+      const streams = res.data?.streams ?? 0;
+      const consumers = res.data?.consumers ?? 0;
+      console.log(`✅ NATS JetStream active (streams: ${streams}, consumers: ${consumers})`);
+    } else if (res.status === 503 || res.status === 404) {
+      console.warn(
+        `⚠️  NATS JetStream NOT enabled (HTTP ${res.status}).\n` +
+        `   Fix: add command: ["-js", "--http_port", "8222"] to the nats service\n` +
+        `   in podman-compose.yml and restart the container.`
+      );
+    }
+  } catch {
+    console.warn(`⚠️  NATS monitor at ${NATS_MONITOR_URL} not reachable — JetStream check skipped`);
+  }
+}
+
 export default async function globalSetup(): Promise<void> {
   console.log('\n🚀 Global Setup: Waiting for all services to be ready...\n');
 
@@ -39,5 +62,9 @@ export default async function globalSetup(): Promise<void> {
     await waitForService(svc.url, svc.name);
   }
 
+  // Non-fatal: warn if JetStream is not enabled rather than blocking tests
+  await checkNatsJetStream();
+
   console.log('\n✅ All services ready. Starting tests...\n');
 }
+

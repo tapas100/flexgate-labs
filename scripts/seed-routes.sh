@@ -34,6 +34,9 @@ create_route "/flaky"    "http://localhost:3003" '["GET","POST"]'
 create_route "/flaky/*"  "http://localhost:3003" '["GET","POST"]'
 create_route "/slow"     "http://localhost:3004" '["GET","POST"]'
 create_route "/slow/*"   "http://localhost:3004" '["GET","POST"]'
+# webhook-receiver route — also declared in flexgate/config/base.yml (tests this config-file path)
+create_route "/webhook"  "http://localhost:3005" '["GET","POST"]'
+create_route "/webhook/*" "http://localhost:3005" '["GET","POST"]'
 
 echo ""
 echo "Done! Routes active:"
