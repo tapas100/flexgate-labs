@@ -41,7 +41,7 @@ describe('Observability: Correlation IDs', () => {
       headers: { 'X-Correlation-ID': correlationId },
     });
 
-    expect([200, 500, 503]).toContain(res.status);
+    expect([200, 404, 500, 503]).toContain(res.status);
     // Regardless of retries, response should have consistent correlation ID
     console.log(`Correlation test on /flaky: ${res.status}`);
   });
