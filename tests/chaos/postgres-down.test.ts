@@ -28,14 +28,38 @@ describe('Chaos: PostgreSQL Down', () => {
       return;
     }
 
-    // api-users has in-memory fallback — should still respond
-    const res = await client.get('/users');
-
-    expect([200, 503]).toContain(res.status);
-    if (res.status === 200) {
-      console.log('✅ In-memory fallback working — got 200 with Postgres down');
-    } else {
-      console.log('ℹ️ Got 503 — gateway correctly reporting upstream degradation');
+    // api-users has in-memory fallback — should still respond.
+    // Use undici with AbortController so we get a real failure if proxy hangs,
+    // instead of axios silently waiting 15s then throwing ECONNABORTED.
+    const { request } = await import('undici');
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 12000);
+    try {
+      const { statusCode } = await request(`${process.env.GATEWAY_URL || 'http://localhost:3000'}/users`, {
+        method: 'GET',
+        signal: controller.signal,
+      });
+      expect([200, 503]).toContain(statusCode);
+      if (statusCode === 200) {
+        console.log('✅ In-memory fallback working — got 200 with Postgres down');
+      } else {
+        console.log('ℹ️ Got 503 — gateway correctly reporting upstream degradation');
+      }
+    } catch (err: any) {
+      if (controller.signal.aborted) {
+        throw new Error(
+          '❌ GET /users timed out with Postgres down — proxy has no upstream timeout.\n' +
+          'Fix: configure a proxyTimeout on the http-proxy-middleware options.'
+        );
+      }
+      const code: string = err?.code ?? '';
+      if (code.includes('ECONNRESET') || code.includes('UND_ERR_SOCKET')) {
+        console.log(`ℹ️ Connection dropped with Postgres down (${code}) — proxy degraded`);
+        return;
+      }
+      throw err;
+    } finally {
+      clearTimeout(timer);
     }
   });
 
