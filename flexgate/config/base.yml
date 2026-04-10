@@ -1,0 +1,73 @@
+server:
+  host: 0.0.0.0
+  port: 4000
+  gracefulShutdownTimeout: 30s
+
+logging:
+  enabled: true
+  level: info
+  format: json
+  correlationId: true
+  fields:
+    - method
+    - path
+    - status
+    - duration
+    - upstreamService
+
+timeout:
+  global: 10s
+  perRoute: true
+
+routes:
+  - id: users-service
+    path: /users
+    pathPrefix: /users
+    upstream: http://api-users:3001
+    timeout: 8s
+    retries:
+      enabled: true
+      count: 3
+      backoff: exponential
+      initialDelay: 100ms
+      maxDelay: 2s
+
+  - id: orders-service
+    path: /orders
+    pathPrefix: /orders
+    upstream: http://api-orders:3002
+    timeout: 8s
+    retries:
+      enabled: true
+      count: 3
+      backoff: exponential
+      initialDelay: 100ms
+      maxDelay: 2s
+
+  - id: flaky-service
+    path: /flaky
+    pathPrefix: /flaky
+    upstream: http://flaky-service:3003
+    timeout: 5s
+    retries:
+      enabled: true
+      count: 5
+      backoff: exponential
+      initialDelay: 200ms
+      maxDelay: 3s
+
+  - id: slow-service
+    path: /slow
+    pathPrefix: /slow
+    upstream: http://slow-service:3004
+    timeout: 3s
+    retries:
+      enabled: false
+
+healthCheck:
+  enabled: true
+  path: /health
+  interval: 10s
+  timeout: 2s
+  unhealthyThreshold: 3
+  healthyThreshold: 2

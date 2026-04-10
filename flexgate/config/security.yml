@@ -1,0 +1,95 @@
+security:
+  enabled: true
+
+  ssrf:
+    enabled: true
+    blockPrivateRanges: true
+    blockedIPs:
+      - "169.254.169.254"
+      - "169.254.170.2"
+      - "fd00:ec2::254"
+      - "::1"
+      - "0.0.0.0"
+    blockedRanges:
+      - "10.0.0.0/8"
+      - "172.16.0.0/12"
+      - "192.168.0.0/16"
+      - "127.0.0.0/8"
+      - "169.254.0.0/16"
+      - "fc00::/7"
+      - "fe80::/10"
+    decodeBeforeCheck: true
+    blockEncodedBypass: true
+    allowedUpstreamHosts:
+      - "api-users"
+      - "api-orders"
+      - "flaky-service"
+      - "slow-service"
+
+  apiKey:
+    enabled: true
+    header: "X-API-Key"
+    keys:
+      - id: test-key-1
+        key: "flexgate-test-key-abc123"
+        scopes: ["read", "write"]
+        rateLimit: 1000
+      - id: admin-key
+        key: "flexgate-admin-key-xyz789"
+        scopes: ["read", "write", "admin"]
+        rateLimit: 5000
+    unauthorizedResponse:
+      statusCode: 401
+      body:
+        error: "Unauthorized"
+        message: "Valid API key required"
+
+  headers:
+    validation:
+      enabled: true
+      rejectMalformed: true
+      maxHeaderSize: 8192
+      maxHeaderCount: 100
+    injection:
+      enabled: true
+      stripNullBytes: true
+      stripControlChars: true
+    security:
+      enabled: true
+      addHeaders:
+        X-Content-Type-Options: nosniff
+        X-Frame-Options: DENY
+        X-XSS-Protection: "1; mode=block"
+        Strict-Transport-Security: "max-age=31536000; includeSubDomains"
+        Content-Security-Policy: "default-src 'self'"
+      removeHeaders:
+        - X-Powered-By
+        - Server
+
+  payload:
+    maxBodySize: 1mb
+    maxJsonDepth: 10
+    rejectJsonBomb: true
+    contentTypeValidation: true
+    allowedContentTypes:
+      - "application/json"
+      - "application/x-www-form-urlencoded"
+      - "multipart/form-data"
+
+  cors:
+    enabled: true
+    allowedOrigins:
+      - "http://localhost:3000"
+      - "http://localhost:8080"
+    allowedMethods:
+      - GET
+      - POST
+      - PUT
+      - DELETE
+      - OPTIONS
+    allowedHeaders:
+      - Content-Type
+      - Authorization
+      - X-API-Key
+      - X-Correlation-ID
+    maxAge: 86400

@@ -1,0 +1,69 @@
+circuitBreaker:
+  enabled: true
+
+  defaults:
+    failureThreshold: 5
+    successThreshold: 2
+    openDuration: 30s
+    halfOpenMaxRequests: 3
+    timeout: 10s
+    volumeThreshold: 10
+    errorThresholdPercentage: 50
+
+  perService:
+    - serviceId: flaky-service
+      enabled: true
+      failureThreshold: 3
+      successThreshold: 2
+      openDuration: 20s
+      halfOpenMaxRequests: 2
+      timeout: 5s
+      volumeThreshold: 5
+      errorThresholdPercentage: 40
+      fallback:
+        enabled: true
+        statusCode: 503
+        body:
+          error: "flaky-service is temporarily unavailable"
+          retryAfter: 20
+
+    - serviceId: slow-service
+      enabled: true
+      failureThreshold: 5
+      successThreshold: 3
+      openDuration: 30s
+      halfOpenMaxRequests: 3
+      timeout: 3s
+      volumeThreshold: 8
+      errorThresholdPercentage: 50
+      fallback:
+        enabled: true
+        statusCode: 503
+        body:
+          error: "slow-service is temporarily unavailable"
+          retryAfter: 30
+
+    - serviceId: users-service
+      enabled: true
+      failureThreshold: 10
+      successThreshold: 3
+      openDuration: 60s
+      halfOpenMaxRequests: 5
+      timeout: 8s
+      volumeThreshold: 20
+      errorThresholdPercentage: 60
+
+    - serviceId: orders-service
+      enabled: true
+      failureThreshold: 10
+      successThreshold: 3
+      openDuration: 60s
+      halfOpenMaxRequests: 5
+      timeout: 8s
+      volumeThreshold: 20
+      errorThresholdPercentage: 60
+
+  monitoring:
+    metricsEnabled: true
+    stateChangeLogging: true
+    alertOnOpen: true

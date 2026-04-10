@@ -1,0 +1,51 @@
+rateLimiting:
+  enabled: true
+  store: redis
+  redis:
+    host: redis
+    port: 6379
+    password: ""
+    db: 0
+    keyPrefix: "flexgate:ratelimit:"
+    connectTimeout: 2s
+    fallback: local
+
+  global:
+    windowMs: 60000
+    maxRequests: 1000
+    message: "Too many requests, please try again later."
+    statusCode: 429
+    headers: true
+
+  perRoute:
+    - routeId: users-service
+      windowMs: 60000
+      maxRequests: 300
+      burst: 50
+      message: "Rate limit exceeded for users service."
+
+    - routeId: orders-service
+      windowMs: 60000
+      maxRequests: 200
+      burst: 30
+      message: "Rate limit exceeded for orders service."
+
+    - routeId: flaky-service
+      windowMs: 60000
+      maxRequests: 100
+      burst: 20
+      message: "Rate limit exceeded for flaky service."
+
+    - routeId: slow-service
+      windowMs: 60000
+      maxRequests: 50
+      burst: 10
+      message: "Rate limit exceeded for slow service."
+
+  keyStrategy: ip
+  skipSuccessfulRequests: false
+  skipFailedRequests: false
+
+  fallbackBehavior:
+    redisDown: allow
+    logFallback: true

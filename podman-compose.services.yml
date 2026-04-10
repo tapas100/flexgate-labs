@@ -1,0 +1,88 @@
+# FlexGate Labs — Mock Backend Services Only
+#
+# Use this when flexgate-proxy is already running locally (via pm2 + podman infra).
+# This starts only the 5 mock backend services on ports 3001-3005.
+#
+# Usage:
+#   podman-compose -f podman-compose.services.yml up -d --build
+#
+version: "3.9"
+
+services:
+  api-users:
+    build:
+      context: ./services/api-users
+      dockerfile: Containerfile
+    container_name: flexgate-api-users
+    environment:
+      PORT: "3001"
+    ports:
+      - "3001:3001"
+    healthcheck:
+      test: ["CMD-SHELL", "wget --spider -q http://localhost:3001/health || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api-orders:
+    build:
+      context: ./services/api-orders
+      dockerfile: Containerfile
+    container_name: flexgate-api-orders
+    environment:
+      PORT: "3002"
+    ports:
+      - "3002:3002"
+    healthcheck:
+      test: ["CMD-SHELL", "wget --spider -q http://localhost:3002/health || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  flaky-service:
+    build:
+      context: ./services/flaky-service
+      dockerfile: Containerfile
+    container_name: flexgate-flaky
+    environment:
+      PORT: "3003"
+      FAILURE_RATE: "0.5"
+    ports:
+      - "3003:3003"
+    healthcheck:
+      test: ["CMD-SHELL", "wget --spider -q http://localhost:3003/health || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  slow-service:
+    build:
+      context: ./services/slow-service
+      dockerfile: Containerfile
+    container_name: flexgate-slow
+    environment:
+      PORT: "3004"
+      DELAY_MS: "3000"
+    ports:
+      - "3004:3004"
+    healthcheck:
+      test: ["CMD-SHELL", "wget --spider -q http://localhost:3004/health || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  webhook-receiver:
+    build:
+      context: ./services/webhook-receiver
+      dockerfile: Containerfile
+    container_name: flexgate-webhook
+    environment:
+      PORT: "3005"
+      WEBHOOK_SECRET: webhook-hmac-secret-xyz
+    ports:
+      - "3005:3005"
+    healthcheck:
+      test: ["CMD-SHELL", "wget --spider -q http://localhost:3005/health || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 10

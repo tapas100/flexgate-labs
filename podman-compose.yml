@@ -1,0 +1,217 @@
+# Podman Compose — flexgate-labs
+# Run with: podman-compose up -d
+# Requires: podman-compose (pip install podman-compose)
+
+version: "3.9"
+
+networks:
+  flexgate-net:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  redis_data:
+
+services:
+  # ─── Infrastructure ───────────────────────────────────────────────────────────
+
+  postgres:
+    image: postgres:15-alpine
+    container_name: flexgate-postgres
+    environment:
+      POSTGRES_DB: flexgate
+      POSTGRES_USER: flexgate
+      POSTGRES_PASSWORD: flexgate_secret
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./scripts/init.sql:/docker-entrypoint-initdb.d/init.sql:z
+    networks:
+      - flexgate-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U flexgate"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: flexgate-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - flexgate-net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  nats:
+    image: nats:2.10-alpine
+    container_name: flexgate-nats
+    ports:
+      - "4222:4222"
+      - "8222:8222"
+    networks:
+      - flexgate-net
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8222/healthz"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # ─── Mock Backend Services ────────────────────────────────────────────────────
+
+  api-users:
+    build:
+      context: ./services/api-users
+      dockerfile: Containerfile
+    container_name: flexgate-api-users
+    environment:
+      PORT: 3001
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: flexgate
+      POSTGRES_USER: flexgate
+      POSTGRES_PASSWORD: flexgate_secret
+    ports:
+      - "3001:3001"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - flexgate-net
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3001/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api-orders:
+    build:
+      context: ./services/api-orders
+      dockerfile: Containerfile
+    container_name: flexgate-api-orders
+    environment:
+      PORT: 3002
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: flexgate
+      POSTGRES_USER: flexgate
+      POSTGRES_PASSWORD: flexgate_secret
+    ports:
+      - "3002:3002"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - flexgate-net
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3002/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  flaky-service:
+    build:
+      context: ./services/flaky-service
+      dockerfile: Containerfile
+    container_name: flexgate-flaky
+    environment:
+      PORT: 3003
+      FAILURE_RATE: "0.5"
+    ports:
+      - "3003:3003"
+    networks:
+      - flexgate-net
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3003/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  slow-service:
+    build:
+      context: ./services/slow-service
+      dockerfile: Containerfile
+    container_name: flexgate-slow
+    environment:
+      PORT: 3004
+      DELAY_MS: "3000"
+    ports:
+      - "3004:3004"
+    networks:
+      - flexgate-net
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3004/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  webhook-receiver:
+    build:
+      context: ./services/webhook-receiver
+      dockerfile: Containerfile
+    container_name: flexgate-webhook
+    environment:
+      PORT: 3005
+      WEBHOOK_SECRET: webhook-hmac-secret-xyz
+    ports:
+      - "3005:3005"
+    networks:
+      - flexgate-net
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3005/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # ─── FlexGate Proxy ───────────────────────────────────────────────────────────
+
+  flexgate:
+    build:
+      context: ./flexgate
+      dockerfile: Containerfile
+    container_name: flexgate-proxy
+    environment:
+      PORT: 4000
+      REDIS_URL: redis://redis:6379
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: flexgate
+      POSTGRES_USER: flexgate
+      POSTGRES_PASSWORD: flexgate_secret
+      NATS_URL: nats://nats:4222
+      API_USERS_URL: http://api-users:3001
+      API_ORDERS_URL: http://api-orders:3002
+      FLAKY_SERVICE_URL: http://flaky-service:3003
+      SLOW_SERVICE_URL: http://slow-service:3004
+      WEBHOOK_RECEIVER_URL: http://webhook-receiver:3005
+      FLEXGATE_API_KEY: test-api-key-12345
+      FLEXGATE_ADMIN_KEY: admin-key-secret-99
+      WEBHOOK_SECRET: webhook-hmac-secret-xyz
+      JWT_SECRET: jwt-signing-secret-abc
+    ports:
+      - "4000:4000"
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
+      api-users:
+        condition: service_healthy
+      api-orders:
+        condition: service_healthy
+    networks:
+      - flexgate-net
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:4000/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 15
