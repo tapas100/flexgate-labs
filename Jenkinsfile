@@ -3,9 +3,10 @@ pipeline {
 
     // ── NodeJS Plugin: installs Node and puts node/npm on PATH ──────────────
     // Prerequisite: Jenkins → Manage Jenkins → Tools → NodeJS installations
-    //   Name: "NodeJS 20"  |  Version: 20.x LTS  |  Install automatically: ✅
+    //   Name: "NodeJS 18"  |  Version: 18.x LTS  |  Install automatically: ✅
+    //   (matches the tool name used in the flexgate-proxy Jenkinsfile)
     tools {
-        nodejs 'NodeJS 20'
+        nodejs 'NodeJS 18'
     }
 
     environment {
